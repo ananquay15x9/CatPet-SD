@@ -1,0 +1,17 @@
+#define ST7735_DRIVER
+#define ST7735_BLACKTAB
+#define TFT_INVERSION_OFF
+#define TFT_RGB_ORDER TFT_RGB
+
+#define TFT_WIDTH  128
+#define TFT_HEIGHT 160
+
+#define TFT_SCLK  2   // GPIO2  (XIAO D8)
+#define TFT_MOSI  3   // GPIO3  (XIAO D10)
+#define TFT_MISO  4   // GPIO4  (XIAO D9)
+
+#define TFT_CS    27  // GPIO27 (XIAO D1)
+#define TFT_DC    28  // GPIO28 (XIAO D2)
+#define TFT_RST   29  // GPIO29 (XIAO D3)
+
+#define SPI_FREQUENCY  27000000

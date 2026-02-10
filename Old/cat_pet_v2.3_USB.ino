@@ -1,0 +1,523 @@
+/*
+ * Cat Pet - Fast RAM Animation + USB Mass Storage
+ * 
+ * Features:
+ * - Displays animated cat based on storage usage
+ * - Exposes SD card as USB drive "CatPet SD"
+ * - Shares SD card safely between animation and USB
+ * 
+ * Hardware: Seeed XIAO RP2040 + Adafruit ST7735 TFT with SD card
+ * 
+ * IMPORTANT SETUP:
+ * 1. Install: Adafruit TinyUSB Library
+ * 2. Tools → USB Stack → "Adafruit TinyUSB"
+ * 3. Upload this sketch
+ * 4. Unplug and replug USB (normal, don't press any buttons)
+ * 5. "CatPet SD" drive should appear!
+ * 
+ * Version: 2.3 (USB MSC + Animation)
+ */
+
+#include <SPI.h>
+#include <TFT_eSPI.h>
+#include <SdFat.h>
+#include <Adafruit_TinyUSB.h>
+
+// -------------------- PINS (GPIO numbers) --------------------
+static const uint8_t SPI_SCK_PIN  = 2;   // GPIO2  = XIAO D8
+static const uint8_t SPI_MOSI_PIN = 3;   // GPIO3  = XIAO D10
+static const uint8_t SPI_MISO_PIN = 4;   // GPIO4  = XIAO D9
+static const uint8_t TFT_CS_PIN   = 27;  // XIAO D1 (TFT CS)
+static const uint8_t SD_CS_PIN    = 26;  // XIAO D0 (SD CS)
+
+// -------------------- DISPLAY + SPRITE --------------------
+TFT_eSPI tft = TFT_eSPI();
+TFT_eSprite spr = TFT_eSprite(&tft);
+
+static const int16_t FRAME_W = 64;
+static const int16_t FRAME_H = 64;
+static const float SCALE = 2.125f;
+static const int16_t SPRITE_W = 136;
+static const int16_t SPRITE_H = 136;
+
+static const uint16_t BG_COLOR = TFT_BLACK;
+static const uint16_t TRANSPARENT_COLOR = 0xF81F;
+
+int16_t spriteX = 0;
+int16_t spriteY = 0;
+
+// -------------------- SD CARD --------------------
+SdFat sd;
+File32 file;
+
+// USB is using the SD card?
+volatile bool usbActive = false;
+
+// -------------------- USB MASS STORAGE --------------------
+Adafruit_USBD_MSC usb_msc;
+
+// Callback: Check if SD card is inserted
+bool msc_changed_callback(void) {
+  return true; // SD card is always present
+}
+
+// Callback: Get disk capacity
+int32_t msc_read_callback(uint32_t lba, void* buffer, uint32_t bufsize) {
+  // USB wants to read from SD card
+  usbActive = true;
+  
+  bool result = sd.card()->readSectors(lba, (uint8_t*)buffer, bufsize / 512);
+  
+  usbActive = false;
+  return result ? bufsize : -1;
+}
+
+// Callback: Write to disk
+int32_t msc_write_callback(uint32_t lba, uint8_t* buffer, uint32_t bufsize) {
+  // USB wants to write to SD card
+  usbActive = true;
+  
+  bool result = sd.card()->writeSectors(lba, buffer, bufsize / 512);
+  
+  usbActive = false;
+  return result ? bufsize : -1;
+}
+
+// Callback: Flush writes
+void msc_flush_callback(void) {
+  sd.card()->syncDevice();
+}
+
+// -------------------- ANIMATION TIMING --------------------
+static const uint16_t IDLE_FPS  = 2;
+static const uint16_t DRINK_FPS = 2;
+static const uint16_t POOP_FPS  = 2;
+
+static const uint32_t IDLE_DT  = 1000 / IDLE_FPS;
+static const uint32_t DRINK_DT = 1000 / DRINK_FPS;
+static const uint32_t POOP_DT  = 1000 / POOP_FPS;
+
+static const float T0 = 25.0f;
+static const float T1 = 75.0f;
+static const float DELTA_TRIGGER = 1.0f;
+
+enum Mode { MODE_IDLE, MODE_DRINK, MODE_POOP };
+Mode mode = MODE_IDLE;
+
+float lastUsedPct = -1.0f;
+uint32_t lastFrameMs = 0;
+uint16_t frameIndex = 0;
+
+// -------------------- FRAME STORAGE (RAM) --------------------
+static const uint8_t NUM_IDLE_NORMAL  = 4;
+static const uint8_t NUM_IDLE_HAPPY   = 4;
+static const uint8_t NUM_IDLE_ANNOYED = 4;
+static const uint8_t NUM_DRINK        = 4;
+static const uint8_t NUM_POOP         = 6;
+
+uint16_t* frames_idle_normal[NUM_IDLE_NORMAL];
+uint16_t* frames_idle_happy[NUM_IDLE_HAPPY];
+uint16_t* frames_idle_annoyed[NUM_IDLE_ANNOYED];
+uint16_t* frames_drink[NUM_DRINK];
+uint16_t* frames_poop[NUM_POOP];
+
+// -------------------- BUS DISCIPLINE --------------------
+static inline void deselectAll() {
+  digitalWrite(TFT_CS_PIN, HIGH);
+  digitalWrite(SD_CS_PIN, HIGH);
+}
+
+static inline void selectSD() {
+  digitalWrite(TFT_CS_PIN, HIGH);
+  digitalWrite(SD_CS_PIN, LOW);
+}
+
+static inline void deselectSD() {
+  digitalWrite(SD_CS_PIN, HIGH);
+}
+
+static inline void selectTFT() {
+  digitalWrite(SD_CS_PIN, HIGH);
+  digitalWrite(TFT_CS_PIN, LOW);
+}
+
+static inline void deselectTFT() {
+  digitalWrite(TFT_CS_PIN, HIGH);
+}
+
+// -------------------- SD INITIALIZATION --------------------
+bool sdInitWithSpeed() {
+  const uint8_t speeds[] = { 24, 18, 12, 8 }; // Lower speeds for USB compatibility
+  const size_t N = sizeof(speeds) / sizeof(speeds[0]);
+
+  for (size_t i = 0; i < N; i++) {
+    deselectAll();
+    selectSD();
+    bool ok = sd.begin(SdSpiConfig(SD_CS_PIN, SHARED_SPI, SD_SCK_MHZ(speeds[i])));
+    deselectSD();
+
+    Serial.print("SD init ");
+    Serial.print(ok ? "OK" : "FAIL");
+    Serial.print(" at ");
+    Serial.print(speeds[i]);
+    Serial.println(" MHz");
+
+    if (ok) {
+      Serial.println("==> SD card ready!");
+      return true;
+    }
+    delay(60);
+  }
+  return false;
+}
+
+// -------------------- FRAME LOADING --------------------
+bool loadFrameToRAM(const char* path, uint16_t** frameBuffer) {
+  deselectAll();
+  selectSD();
+
+  if (!file.open(path, O_READ)) {
+    Serial.print("ERROR: Cannot open ");
+    Serial.println(path);
+    deselectSD();
+    return false;
+  }
+
+  uint32_t fileSize = file.size();
+  uint32_t expectedSize = FRAME_W * FRAME_H * 2;
+  
+  if (fileSize != expectedSize) {
+    Serial.print("ERROR: Wrong file size for ");
+    Serial.println(path);
+    file.close();
+    deselectSD();
+    return false;
+  }
+
+  *frameBuffer = (uint16_t*)malloc(expectedSize);
+  if (*frameBuffer == NULL) {
+    Serial.print("ERROR: Out of memory for ");
+    Serial.println(path);
+    file.close();
+    deselectSD();
+    return false;
+  }
+
+  int bytesRead = file.read((uint8_t*)*frameBuffer, expectedSize);
+  file.close();
+  deselectSD();
+
+  if (bytesRead != expectedSize) {
+    Serial.print("ERROR: Read failed for ");
+    Serial.println(path);
+    free(*frameBuffer);
+    *frameBuffer = NULL;
+    return false;
+  }
+
+  Serial.print("Loaded: ");
+  Serial.println(path);
+  return true;
+}
+
+bool loadAllFrames() {
+  Serial.println("\n=================================");
+  Serial.println("Loading frames into RAM...");
+  Serial.println("=================================");
+  
+  char path[64];
+  bool success = true;
+
+  Serial.println("\n[1/5] Loading idle_normal frames...");
+  for (uint8_t i = 0; i < NUM_IDLE_NORMAL; i++) {
+    snprintf(path, sizeof(path), "/cat_idle/n%02u.rgb", i);
+    if (!loadFrameToRAM(path, &frames_idle_normal[i])) success = false;
+  }
+
+  Serial.println("\n[2/5] Loading idle_happy frames...");
+  for (uint8_t i = 0; i < NUM_IDLE_HAPPY; i++) {
+    snprintf(path, sizeof(path), "/cat_idle/h%02u.rgb", i);
+    if (!loadFrameToRAM(path, &frames_idle_happy[i])) success = false;
+  }
+
+  Serial.println("\n[3/5] Loading idle_annoyed frames...");
+  for (uint8_t i = 0; i < NUM_IDLE_ANNOYED; i++) {
+    snprintf(path, sizeof(path), "/cat_idle/a%02u.rgb", i);
+    if (!loadFrameToRAM(path, &frames_idle_annoyed[i])) success = false;
+  }
+
+  Serial.println("\n[4/5] Loading drink frames...");
+  for (uint8_t i = 0; i < NUM_DRINK; i++) {
+    snprintf(path, sizeof(path), "/cat_drink/d%02u.rgb", i);
+    if (!loadFrameToRAM(path, &frames_drink[i])) success = false;
+  }
+
+  Serial.println("\n[5/5] Loading poop frames...");
+  for (uint8_t i = 0; i < NUM_POOP; i++) {
+    snprintf(path, sizeof(path), "/cat_poop/p%02u.rgb", i);
+    if (!loadFrameToRAM(path, &frames_poop[i])) success = false;
+  }
+
+  Serial.println("\n=================================");
+  if (success) {
+    Serial.println("ALL FRAMES LOADED SUCCESSFULLY!");
+  } else {
+    Serial.println("SOME FRAMES FAILED TO LOAD!");
+  }
+  Serial.println("=================================\n");
+
+  return success;
+}
+
+// -------------------- FRAME RENDERING --------------------
+void drawFrameToSprite(uint16_t* frameBuffer) {
+  if (frameBuffer == NULL) return;
+  if (usbActive) return; // Don't interfere with USB access
+
+  spr.fillSprite(BG_COLOR);
+
+  for (int16_t dy = 0; dy < SPRITE_H; dy++) {
+    for (int16_t dx = 0; dx < SPRITE_W; dx++) {
+      int16_t sx = (int16_t)(dx / SCALE);
+      int16_t sy = (int16_t)(dy / SCALE);
+      
+      if (sx >= FRAME_W) sx = FRAME_W - 1;
+      if (sy >= FRAME_H) sy = FRAME_H - 1;
+      
+      uint16_t pixel = frameBuffer[sy * FRAME_W + sx];
+      
+      if (pixel == TRANSPARENT_COLOR) continue;
+      
+      spr.drawPixel(dx, dy, pixel);
+    }
+  }
+
+  selectTFT();
+  spr.pushSprite(spriteX, spriteY);
+  deselectTFT();
+}
+
+// -------------------- STORAGE MONITORING --------------------
+float getUsedPercent() {
+  if (usbActive) return lastUsedPct; // Don't check during USB access
+  
+  selectSD();
+  uint32_t totalClusters = sd.vol()->clusterCount();
+  if (totalClusters == 0) {
+    deselectSD();
+    return 0.0f;
+  }
+  uint32_t freeClusters = sd.vol()->freeClusterCount();
+  deselectSD();
+
+  float used = 100.0f * (1.0f - (float)freeClusters / (float)totalClusters);
+  if (used < 0) used = 0;
+  if (used > 100) used = 100;
+  return used;
+}
+
+// -------------------- MODE CONTROL --------------------
+void startDrink() {
+  mode = MODE_DRINK;
+  frameIndex = 0;
+  lastFrameMs = 0;
+  Serial.println("MODE: Drink animation");
+}
+
+void startPoop() {
+  mode = MODE_POOP;
+  frameIndex = 0;
+  lastFrameMs = 0;
+  Serial.println("MODE: Poop animation");
+}
+
+void startIdle() {
+  mode = MODE_IDLE;
+  frameIndex = 0;
+  lastFrameMs = 0;
+  Serial.println("MODE: Idle");
+}
+
+// -------------------- SETUP --------------------
+void setup() {
+  Serial.begin(115200);
+  delay(1000); // Give time for Serial to connect
+  
+  Serial.println("\n\n====================================");
+  Serial.println("Cat Pet v2.3 - USB + Animation");
+  Serial.println("====================================\n");
+
+  // Configure SPI pins
+  SPI.setSCK(SPI_SCK_PIN);
+  SPI.setTX(SPI_MOSI_PIN);
+  SPI.setRX(SPI_MISO_PIN);
+  SPI.begin();
+
+  pinMode(TFT_CS_PIN, OUTPUT);
+  pinMode(SD_CS_PIN, OUTPUT);
+  deselectAll();
+  delay(10);
+
+  // Initialize TFT
+  Serial.println("Initializing TFT display...");
+  selectTFT();
+  tft.init();
+  tft.setRotation(1);
+  tft.fillScreen(BG_COLOR);
+  tft.setTextColor(TFT_GREEN, BG_COLOR);
+  tft.setTextSize(1);
+  tft.drawString("Cat Pet v2.3", 10, 10, 2);
+  tft.drawString("USB + Animation", 10, 30, 2);
+  Serial.println("TFT OK");
+
+  // Initialize sprite
+  spr.setColorDepth(16);
+  spr.createSprite(SPRITE_W, SPRITE_H);
+  spr.fillSprite(BG_COLOR);
+
+  spriteX = (tft.width() - SPRITE_W) / 2;
+  spriteY = (tft.height() - SPRITE_H) / 2;
+  
+  deselectTFT();
+
+  // Initialize SD card
+  Serial.println("\nInitializing SD card...");
+  selectTFT();
+  tft.drawString("Init SD card...", 10, 50, 2);
+  deselectTFT();
+  
+  if (!sdInitWithSpeed()) {
+    selectTFT();
+    tft.fillScreen(BG_COLOR);
+    tft.setTextColor(TFT_RED, BG_COLOR);
+    tft.drawString("SD CARD FAILED!", 10, 10, 2);
+    deselectTFT();
+    Serial.println("FATAL: SD card init failed!");
+    while (1) delay(1000);
+  }
+
+  // Initialize USB Mass Storage
+  Serial.println("\nInitializing USB Mass Storage...");
+  selectTFT();
+  tft.drawString("Init USB drive...", 10, 70, 2);
+  deselectTFT();
+  
+  usb_msc.setID("Adafruit", "SD Card", "1.0");
+  usb_msc.setCapacity(sd.card()->sectorCount(), 512);
+  usb_msc.setReadWriteCallback(msc_read_callback, msc_write_callback, msc_flush_callback);
+  usb_msc.setUnitReady(true);
+  usb_msc.begin();
+  
+  Serial.println("USB MSC initialized!");
+  Serial.println("Unplug and replug USB to see 'CatPet SD' drive");
+
+  // Load all frames into RAM
+  selectTFT();
+  tft.drawString("Loading frames...", 10, 90, 2);
+  deselectTFT();
+  
+  if (!loadAllFrames()) {
+    selectTFT();
+    tft.fillScreen(BG_COLOR);
+    tft.setTextColor(TFT_RED, BG_COLOR);
+    tft.drawString("FRAME LOAD FAILED!", 10, 10, 2);
+    deselectTFT();
+    Serial.println("FATAL: Frame loading failed!");
+    while (1) delay(1000);
+  }
+
+  // Get initial storage state
+  lastUsedPct = getUsedPercent();
+  Serial.print("Initial storage used: ");
+  Serial.print(lastUsedPct, 1);
+  Serial.println("%");
+
+  // Clear screen and show first frame
+  selectTFT();
+  tft.fillScreen(BG_COLOR);
+  deselectTFT();
+  
+  drawFrameToSprite(frames_idle_normal[0]);
+
+  Serial.println("\n====================================");
+  Serial.println("CAT PET IS ALIVE!");
+  Serial.println("====================================\n");
+  Serial.println("Animation: RUNNING at 2 FPS");
+  Serial.println("USB Drive: Unplug/replug to access");
+  Serial.println("====================================\n");
+}
+
+// -------------------- MAIN LOOP --------------------
+void loop() {
+  uint32_t now = millis();
+
+  // Check storage changes every 2 seconds (less frequently to avoid USB conflicts)
+  static uint32_t lastPollMs = 0;
+  if (now - lastPollMs > 2000) {
+    lastPollMs = now;
+
+    if (!usbActive) { // Only check when USB isn't using SD
+      float usedPct = getUsedPercent();
+      float delta = usedPct - lastUsedPct;
+
+      if (mode == MODE_IDLE) {
+        if (delta >= DELTA_TRIGGER) {
+          startDrink();
+        } else if (delta <= -DELTA_TRIGGER) {
+          startPoop();
+        }
+      }
+
+      lastUsedPct = usedPct;
+    }
+  }
+
+  // Frame timing
+  uint32_t dt = (mode == MODE_POOP) ? POOP_DT : (mode == MODE_DRINK ? DRINK_DT : IDLE_DT);
+  if (now - lastFrameMs < dt) return;
+  lastFrameMs = now;
+
+  // Render the appropriate frame
+  if (mode == MODE_DRINK) {
+    if (frameIndex < NUM_DRINK) {
+      drawFrameToSprite(frames_drink[frameIndex]);
+    }
+    frameIndex++;
+    if (frameIndex >= NUM_DRINK) {
+      startIdle();
+    }
+    return;
+  }
+
+  if (mode == MODE_POOP) {
+    if (frameIndex < NUM_POOP) {
+      drawFrameToSprite(frames_poop[frameIndex]);
+    }
+    frameIndex++;
+    if (frameIndex >= NUM_POOP) {
+      startIdle();
+    }
+    return;
+  }
+
+  // Idle mode
+  uint16_t** currentSet;
+  uint8_t setSize;
+  
+  if (lastUsedPct <= T0) {
+    currentSet = frames_idle_normal;
+    setSize = NUM_IDLE_NORMAL;
+  } else if (lastUsedPct <= T1) {
+    currentSet = frames_idle_happy;
+    setSize = NUM_IDLE_HAPPY;
+  } else {
+    currentSet = frames_idle_annoyed;
+    setSize = NUM_IDLE_ANNOYED;
+  }
+
+  uint16_t localFrame = frameIndex % setSize;
+  drawFrameToSprite(currentSet[localFrame]);
+  
+  frameIndex++;
+  if (frameIndex > 10000) frameIndex = 0;
+}
