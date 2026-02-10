@@ -12,7 +12,7 @@ A small desktop “pet” that shows an animated cat on a TFT display and expose
 
 | Item | Details |
 |------|--------|
-| **Board** | [Seeed Studio XIAO RP2040](https://wiki.seeedstudio.com/xiao_rp2040/) |
+| **Board** | [Seeed Studio XIAO RP2040](https://wiki.seeedstudio.com/XIAO-RP2040/) |
 | **MCU** | Raspberry Pi RP2040 (dual-core ARM Cortex-M0+ @ up to 133 MHz) |
 | **Flash** | 2 MB |
 | **SRAM** | 264 KB |
@@ -22,8 +22,8 @@ A small desktop “pet” that shows an animated cat on a TFT display and expose
 
 | Item | Details |
 |------|--------|
-| **Product** | [Adafruit 0.96" 160×80 Color TFT Display w/ MicroSD Card Breakout - ST7735](https://www.adafruit.com/product/3533) |
-| **Display** | 0.96" diagonal, 160×80 RGB, ST7735R driver |
+| **Product** | [Adafruit 0.96" 160×80 Color TFT Display w/ MicroSD Card Breakout - ST7735](https://www.adafruit.com/product/2088) |
+| **Display** | 1.44" diagonal, 180x128 RGB, ST7735R driver |
 | **SD slot** | MicroSD card slot on same breakout (shared SPI) |
 | **Interface** | 4-wire SPI (shared between TFT and SD; separate chip-select pins) |
 
@@ -49,7 +49,7 @@ The sketch uses **software SPI** and the following pins. Wire the breakout to th
 **Important:** The sketch only sets **SPI pins and the two CS pins** (27 = TFT, 26 = SD) in code. **D/C** and **RST** (and optionally **Lite**) must be set in the **TFT_eSPI** library configuration so they match your wiring:
 
 - Edit `User_Setup.h` (or a board-specific setup) inside your TFT_eSPI library folder.
-- Choose a driver for **ST7735** and **160×80** (or the correct resolution for your revision).
+- Choose a driver for **ST7735** and **180x128** (or the correct resolution for your revision).
 - Set `TFT_CS = 27`, `TFT_DC` and `TFT_RST` to the GPIO numbers you actually use for D/C and RST.
 
 ---
@@ -139,8 +139,8 @@ If you redistribute this sketch or a derivative, please keep attribution and, wh
 
 ## References
 
-- [Seeed XIAO RP2040 wiki](https://wiki.seeedstudio.com/xiao_rp2040/)
-- [Adafruit 0.96" 160×80 TFT + MicroSD Breakout (ST7735)](https://www.adafruit.com/product/3533)
+- [Seeed XIAO RP2040 wiki](https://wiki.seeedstudio.com/XIAO-RP2040/)
+- [Adafruit 1.44" 180x128 TFT + MicroSD Breakout (ST7735)](https://www.adafruit.com/product/2088)
 - [Adafruit TinyUSB (Arduino)](https://github.com/adafruit/Adafruit_TinyUSB_Arduino)
 - [SdFat](https://github.com/greiman/SdFat)
 - [TFT_eSPI](https://github.com/Bodmer/TFT_eSPI)
