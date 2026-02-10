@@ -3,7 +3,7 @@
  * 
  * This version has extra debugging to figure out why USB isn't working
  * 2.4v stable latest.
- * Upload this, then check Serial Monitor at 115200 baud
+ * 
  */
 
  #include <SPI.h>
