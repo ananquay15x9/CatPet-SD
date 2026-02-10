@@ -1,10 +1,26 @@
 # Cat Pet – USB Drive + TFT Animation
 
-A small desktop “pet” that shows an animated cat on a TFT display and exposes its SD card as a **USB mass-storage drive** (e.g. **G:**) so you can manage files from your PC. The cat’s idle mood is based on how full the SD card is; drink/poop animations are triggered by adding or removing files (when live tracking is enabled).
+A USB flash drive that behaves like a tiny digital pet.
 
-**Status:** Works with current hardware when SD init succeeds. See [CAT_PET_PROJECT_REPORT.md](CAT_PET_PROJECT_REPORT.md) for what’s implemented, what’s stable, and known limitations.
+When you copy files → it drinks  
+When you delete files → it poops  
+Idle mood depends on how full the drive is
+
+No software required. Plug into any PC and it runs.
 
 ---
+
+## Features
+
+- USB Mass Storage (standard flash drive)
+- Animated TFT cat
+- File-activity reactions
+- Storage mood system
+- Stable SPI + USB coexistence
+- Standalone firmware
+
+---
+
 
 ## Hardware
 
@@ -113,15 +129,14 @@ No other libraries are required for the core sketch.
 
 ---
 
-## Optional: USB-only mode (no cat, no SD access after boot)
+## Setup
 
-In the sketch, set:
+1. Flash firmware once using Arduino IDE
+2. Insert SD card with animation folders
+3. Plug into PC
+4. Cat lives forever
 
-```c
-#define USB_MSC_ONLY 1
-```
-
-Then upload. The board will only initialize the SD and start USB mass storage; it will not load frames or run the cat animation. Use this to verify that the USB drive (G:) is stable or to format/repair the SD from the PC.
+No IDE required after upload.
 
 ---
 

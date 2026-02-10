@@ -1,6 +1,6 @@
 /*
  * Cat Pet - USB DIAGNOSTIC Version (2.4v stable BASE)
- * 2.5v UPDATE: - Updated to use SdFat's SdCard interface for more direct sector access, improving USB MSC stability. 1:58AM
+ * 2.5v base: - Updated to use SdFat's SdCard interface for more direct sector access, improving USB MSC stability. 1:58AM
  */ 
 
 #include <SPI.h>
